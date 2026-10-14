@@ -1,0 +1,63 @@
+name: Build storage LXC template
+on:
+  pull_request:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: template-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mmdebstrap debian-archive-keyring zstd shellcheck unzip curl git python3 util-linux
+      - name: Check scripts and policy tests
+        run: |
+          shellcheck scripts/*.sh
+          python3 -B -m unittest discover -s tests
+      - name: Build and verify clean template
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${RELEASE_TAG:-v0.0.0-dev}"
+          sudo scripts/build.sh "$version" "$RUNNER_TEMP/storage-template"
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/storage-template"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: storage-template-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/storage-template/*
+          if-no-files-found: error
+          retention-days: 7
+  release:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: storage-template-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-assets
+      - name: Attach verified assets to the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd release-assets
+          sha256sum --check SHA256SUMS
+          gh release upload "$RELEASE_TAG" ./*.tar.zst ./template.json ./packages.tsv ./SHA256SUMS

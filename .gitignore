@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+build/
+dist/
+rootfs/
+*.tar
+*.tar.zst
+.aws/
+.agents/
+.codex/
+.atlas/
