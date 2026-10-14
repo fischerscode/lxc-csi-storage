@@ -13,7 +13,7 @@ ln -s /proc/self/fd/0 "$rootfs/dev/stdin"
 ln -s /proc/self/fd/1 "$rootfs/dev/stdout"
 ln -s /proc/self/fd/2 "$rootfs/dev/stderr"
 chroot "$rootfs" /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \
-    npm --prefix /opt/atlas-democratic-csi ci --omit=dev --no-audit --no-fund
+    npm --prefix /opt/democratic-csi ci --omit=dev --no-audit --no-fund
 mkdir -p "$rootfs/run/sshd"
 chroot "$rootfs" /usr/bin/ssh-keygen -A
 chroot "$rootfs" /usr/sbin/sshd -t

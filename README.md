@@ -1,8 +1,8 @@
-# Atlas storage LXC template
+# CSI storage LXC template
 
-Public, unconfigured Debian 13 (amd64) rootfs for a dedicated trusted Atlas
-storage container. Each customer/cluster receives an independent instance.
-Builds never export a running container or read an Atlas checkout/runtime.
+Public, unconfigured Debian 13 (amd64) rootfs for a dedicated trusted
+storage container. Each customer or cluster receives an independent instance.
+Builds never export a running container or read a control-plane checkout or runtime.
 
 The image contains SSH, systemd/ifupdown, NFS tools, ZFS userspace tools,
 targetcli/LIO tools, the pinned democratic-csi upstream source and production
@@ -26,7 +26,7 @@ job has read-only repository permissions, checks scripts/tests, creates the
 rootfs and verifies it before packing and again after packing. A separate job
 with release-write permission attaches:
 
-- `debian-13-atlas-storage-amd64_<version>.tar.zst`
+- `debian-13-csi-storage-amd64_<version>.tar.zst`
 - `template.json` (the public configuration contract)
 - `packages.tsv` (the actual installed package versions)
 - `SHA256SUMS`
@@ -44,7 +44,7 @@ For a local build, use an isolated Linux root builder with `mmdebstrap`,
 shellcheck scripts/build.sh
 python3 -B -m unittest discover -s tests
 sudo scripts/build.sh v0.1.0-dev /absolute/external/new-output-directory
-python3 scripts/verify.py --archive /absolute/external/new-output-directory/debian-13-atlas-storage-amd64_v0.1.0-dev.tar.zst
+python3 scripts/verify.py --archive /absolute/external/new-output-directory/debian-13-csi-storage-amd64_v0.1.0-dev.tar.zst
 ```
 
 The output directory must be new and outside the checkout. A failed build keeps
@@ -55,27 +55,27 @@ repositories and normal expiry checking for subsequent operator updates.
 
 ## Instance configuration contract: v1
 
-`/usr/share/atlas-storage/template.json` identifies the image version, application
-pins and required host bindings. The backend source is upstream, without Atlas
-portal/persistence overlays; the Atlas installer applies and verifies its own
-reviewed overlays. There are no imports of private Atlas code in this repository.
+`/usr/share/csi-storage/template.json` identifies the image version, application
+pins and required host bindings. The backend source is upstream, without consumer
+portal/persistence overlays. A consumer installer applies and verifies its own
+reviewed overlays. This repository imports no control-plane implementation.
 
-Atlas creates the LXC, injects the operator public key and instance network
+The consumer creates the LXC, injects the operator public key and instance network
 configuration, then provides configuration over operator SSH. Cluster clients
-never receive that SSH access. Atlas supplies the privileged LXC device/mount
+never receive that SSH access. The consumer supplies the privileged LXC device/mount
 permissions, owning dataset mount, `/dev/zfs`, owning ZVOL access, LIO target
 configfs and the common host-backed persistence lock. The host owns discovery
 authentication. Exact per-customer TLS, CHAP, paths, exports, quotas and policies
-are configured by Atlas after creation; they are not baked into this image.
+are configured by the consumer after creation; they are not baked into this image.
 
 The empty machine-id is populated on boot. A service required before SSH generates
 fresh instance host keys. Password/interactive login is disabled. Global ZFS,
-NFS and LIO package activation is masked; Atlas must enable only its reviewed
+NFS and LIO package activation is masked; The consumer must enable only its reviewed
 scoped recovery/services after checking host bindings. Do not unmask Debian's
 whole-tree LIO save/restore service. Merely booting the image must not activate
 storage exports or targets. Forwarding is disabled for both address families.
 
-The privileged LXC and its Atlas configuration are trusted. This template does
+The privileged LXC and its consumer configuration are trusted. This template does
 not create a security boundary against a compromised container-root process.
 Customer isolation is provided by the gatekeeper, network rules, NFS exports and
 iSCSI authentication configured outside the image.
@@ -86,7 +86,7 @@ Unused upstream SSH test fixtures are removed. The signed Debian GnuTLS library
 contains embedded public self-test key vectors; the scanner permits only that
 reviewed ELF path with its exact pinned SHA-256. It rejects other key material
 and does not exempt arbitrary binaries. Those public vectors authenticate no
-Atlas customer.
+consumer.
 
 Archive verification checks identity/configuration leaks and activation masks.
 It does not prove Proxmox boot, SSH uniqueness, provider integration, CSI/PVC

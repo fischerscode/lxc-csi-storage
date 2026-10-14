@@ -11,8 +11,8 @@ import tarfile
 
 PUBLIC_SELF_TEST_HASHES = json.loads((Path(__file__).resolve().parents[1] / 'build-config.json').read_text())['public_self_test_files_sha256']
 
-FORBIDDEN = ('root/.ssh', 'root/.npm', 'root/.cache', 'etc/atlas-storage',
-             'etc/atlas-credentials', 'var/lib/atlas-lio', 'var/lib/atlas-lio-shared',
+FORBIDDEN = ('root/.ssh', 'root/.npm', 'root/.cache', 'etc/csi-storage',
+             'etc/csi-credentials', 'var/lib/csi-lio', 'var/lib/csi-lio-shared',
              'var/lib/systemd/random-seed')
 PRIVATE_PEM = re.compile(rb'-----BEGIN (?:[A-Z ]*PRIVATE KEY)-----[\r\n]+[A-Za-z0-9+/=\r\n]{64,}-----END (?:[A-Z ]*PRIVATE KEY)-----')
 
@@ -60,23 +60,23 @@ def verify(entries):
         if name == 'etc/shadow':
             if any(line.split(b':')[1] not in (b'!', b'*', b'!!', b'!*') for line in data.splitlines()):
                 raise ValueError('Account credential present')
-        if name == 'etc/systemd/system/atlas-ssh-host-keys.service':
+        if name == 'etc/systemd/system/csi-storage-ssh-host-keys.service':
             host_key_generation = b'ExecStart=/usr/bin/ssh-keygen -A' in data
-        if name == 'usr/share/atlas-storage/template.json':
+        if name == 'usr/share/csi-storage/template.json':
             manifest = json.loads(data)
     if not machine_id or not host_key_generation or not manifest:
         raise ValueError('Missing template/first-boot contract')
-    if manifest['schema_version'] != 1 or manifest['configuration_contract'] != 'atlas-storage-template/v1' or manifest['configured'] is not False:
+    if manifest['schema_version'] != 1 or manifest['configuration_contract'] != 'csi-storage-template/v1' or manifest['configured'] is not False:
         raise ValueError('Unsupported or already configured template')
     if manifest['masked_units'] != list(MASKS):
         raise ValueError('Invalid activation mask contract')
     for unit in MASKS:
         if masks.get(unit) != '/dev/null':
             raise ValueError('Missing storage activation mask: ' + unit)
-    required = ['opt/atlas-csi-gatekeeper/csi-gatekeeper',
-                'opt/atlas-democratic-csi/package-lock.json',
-                'opt/atlas-democratic-csi/node_modules/@grpc/grpc-js/package.json',
-                'etc/ssh/sshd_config.d/10-atlas-template.conf']
+    required = ['opt/csi-gatekeeper/csi-gatekeeper',
+                'opt/democratic-csi/package-lock.json',
+                'opt/democratic-csi/node_modules/@grpc/grpc-js/package.json',
+                'etc/ssh/sshd_config.d/10-csi-storage-template.conf']
     if not all(p in seen for p in required):
         raise ValueError('Missing application or SSH policy')
     return manifest

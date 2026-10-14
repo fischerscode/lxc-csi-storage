@@ -14,15 +14,15 @@ spec.loader.exec_module(module)
 def clean():
     import json
     manifest = {'schema_version': 1, 'template_version': 'v0.0.0-test',
-                'configuration_contract': 'atlas-storage-template/v1', 'configured': False,
+                'configuration_contract': 'csi-storage-template/v1', 'configured': False,
                 'masked_units': list(module.MASKS)}
     files = {'etc/machine-id': b'', 'etc/shadow': b'root:!:0:0:0:0:::\n',
-             'etc/systemd/system/atlas-ssh-host-keys.service': b'ExecStart=/usr/bin/ssh-keygen -A',
-             'usr/share/atlas-storage/template.json': json.dumps(manifest).encode(),
-             'opt/atlas-csi-gatekeeper/csi-gatekeeper': b'PUBLIC TEST EXECUTABLE PLACEHOLDER',
-             'opt/atlas-democratic-csi/package-lock.json': b'{}',
-             'opt/atlas-democratic-csi/node_modules/@grpc/grpc-js/package.json': b'{}',
-             'etc/ssh/sshd_config.d/10-atlas-template.conf': b'PasswordAuthentication no'}
+             'etc/systemd/system/csi-storage-ssh-host-keys.service': b'ExecStart=/usr/bin/ssh-keygen -A',
+             'usr/share/csi-storage/template.json': json.dumps(manifest).encode(),
+             'opt/csi-gatekeeper/csi-gatekeeper': b'PUBLIC TEST EXECUTABLE PLACEHOLDER',
+             'opt/democratic-csi/package-lock.json': b'{}',
+             'opt/democratic-csi/node_modules/@grpc/grpc-js/package.json': b'{}',
+             'etc/ssh/sshd_config.d/10-csi-storage-template.conf': b'PasswordAuthentication no'}
     return [(n, 'file', '', v) for n, v in files.items()] + [('etc/systemd/system/'+n, 'symlink', '/dev/null', b'') for n in manifest['masked_units']]
 
 
@@ -32,7 +32,7 @@ class PolicyTests(unittest.TestCase):
 
     def test_instance_data_and_archive_escapes(self):
         for path in ['root/.ssh/authorized_keys', 'etc/ssh/ssh_host_ed25519_key',
-                     'etc/atlas-storage/customer.json', 'var/lib/atlas-lio/shared.json',
+                     'etc/csi-storage/customer.json', 'var/lib/csi-lio/shared.json',
                      '../outside', '/etc/passwd']:
             with self.subTest(path=path), self.assertRaises(ValueError):
                 module.verify(clean() + [(path, 'file', '', b'PUBLIC TEST PLACEHOLDER')])
@@ -66,7 +66,7 @@ class PolicyTests(unittest.TestCase):
         import json
         entries = []
         for n,k,l,data in clean():
-            if n == 'usr/share/atlas-storage/template.json':
+            if n == 'usr/share/csi-storage/template.json':
                 v = json.loads(data); v['masked_units'] = []; data = json.dumps(v).encode()
             entries.append((n,k,l,data))
         with self.assertRaises(ValueError):

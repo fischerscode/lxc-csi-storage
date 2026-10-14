@@ -42,9 +42,9 @@ mmdebstrap --mode=root --variant=minbase --architectures="$arch" --components=ma
  "deb https://snapshot.debian.org/archive/debian/$snapshot/ $suite-updates main contrib" \
  "deb https://snapshot.debian.org/archive/debian-security/$snapshot/ $suite-security main contrib"
 # mmdebstrap blocks package services during installation. No ZFS DKMS/kernel is installed.
-git clone --no-checkout https://github.com/democratic-csi/democratic-csi.git "$rootfs/opt/atlas-democratic-csi"
-git -C "$rootfs/opt/atlas-democratic-csi" checkout --detach "$commit"
-printf '%s  %s\n' "${config[6]}" "$rootfs/opt/atlas-democratic-csi/src/driver/controller-zfs-generic/index.js" | sha256sum --check --status
+git clone --no-checkout https://github.com/democratic-csi/democratic-csi.git "$rootfs/opt/democratic-csi"
+git -C "$rootfs/opt/democratic-csi" checkout --detach "$commit"
+printf '%s  %s\n' "${config[6]}" "$rootfs/opt/democratic-csi/src/driver/controller-zfs-generic/index.js" | sha256sum --check --status
 # mmdebstrap removes its temporary resolver; npm still needs build-time DNS.
 rm -f "$rootfs/etc/resolv.conf"
 install -m 0644 /etc/resolv.conf "$rootfs/etc/resolv.conf"
@@ -52,24 +52,24 @@ install -m 0644 /etc/resolv.conf "$rootfs/etc/resolv.conf"
 unshare --mount --propagation private "$repo/scripts/install-node-dependencies.sh" "$rootfs"
 curl --fail --location --proto '=https' --tlsv1.2 --retry 3 "${config[4]}" -o "$work/gatekeeper.zip"
 printf '%s  %s\n' "${config[5]}" "$work/gatekeeper.zip" | sha256sum --check --status
-mkdir -p "$rootfs/opt/atlas-csi-gatekeeper"
+mkdir -p "$rootfs/opt/csi-gatekeeper"
 unzip -q "$work/gatekeeper.zip" -d "$work/gatekeeper"
 gatekeeperdir=$work/gatekeeper/csi-gatekeeper-${config[7]}-linux-x64
 [[ -f $gatekeeperdir/csi-gatekeeper ]] || { echo 'Unexpected gatekeeper archive layout' >&2; exit 1; }
-install -m 0755 "$gatekeeperdir/csi-gatekeeper" "$rootfs/opt/atlas-csi-gatekeeper/csi-gatekeeper"
+install -m 0755 "$gatekeeperdir/csi-gatekeeper" "$rootfs/opt/csi-gatekeeper/csi-gatekeeper"
 mkdir -p "$rootfs/usr/share/doc/csi-gatekeeper"
 install -m 0644 "$gatekeeperdir/LICENSE" "$gatekeeperdir/THIRD_PARTY_NOTICES.txt" "$gatekeeperdir/BUILD_INFO.json" "$rootfs/usr/share/doc/csi-gatekeeper/"
-printf '%s  %s\n' "${config[6]}" "$rootfs/opt/atlas-democratic-csi/src/driver/controller-zfs-generic/index.js" | sha256sum --check --status
+printf '%s  %s\n' "${config[6]}" "$rootfs/opt/democratic-csi/src/driver/controller-zfs-generic/index.js" | sha256sum --check --status
 python3 "$repo/scripts/finalize.py" "$rootfs" "$version" "$repo/build-config.json"
-chroot "$rootfs" /usr/bin/node --check /opt/atlas-democratic-csi/src/driver/controller-zfs-generic/index.js
+chroot "$rootfs" /usr/bin/node --check /opt/democratic-csi/src/driver/controller-zfs-generic/index.js
 # dpkg-query expands its own format fields.
 # shellcheck disable=SC2016
 chroot "$rootfs" /usr/bin/dpkg-query -W '-f=${binary:Package}\t${Version}\n' > "$out/packages.tsv"
 python3 "$repo/scripts/verify.py" --rootfs "$rootfs"
-name="debian-13-atlas-storage-${arch}_${version}.tar.zst"
+name="debian-13-csi-storage-${arch}_${version}.tar.zst"
 # Preserve every uid/gid, xattr, ACL and Debian merged-/usr symlink.
 tar --numeric-owner --xattrs --acls --sort=name -C "$rootfs" -cf - . | zstd -T0 -10 -o "$out/$name"
-cp "$rootfs/usr/share/atlas-storage/template.json" "$out/template.json"
+cp "$rootfs/usr/share/csi-storage/template.json" "$out/template.json"
 python3 "$repo/scripts/verify.py" --archive "$out/$name"
 (cd "$out" && sha256sum "$name" template.json packages.tsv > SHA256SUMS)
 echo "Template verified: $name"
