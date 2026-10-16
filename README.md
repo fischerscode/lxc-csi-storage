@@ -15,10 +15,19 @@ or pool, and does not install ZFS DKMS.
 
 `build-config.json` pins a signed Debian snapshot, backend commit/source digest
 and gatekeeper release/archive digest. The bootstrap archive keyring is also
-HTTPS-downloaded and hash-pinned, independently of the Ubuntu runner keyring. Dependency installation uses `npm ci`
-and the upstream lockfile. Release assets include package versions. This is a
-repeatable pinned-input build, not a claim of bit-identical output: npm scripts,
-Git metadata, package-generated timestamps and archive metadata can vary.
+HTTPS-downloaded and hash-pinned, independently of the Ubuntu runner keyring.
+The backend is downloaded as a checksum-pinned upstream source archive; no Git
+history or Git executable is installed in the image. Dependency installation uses
+`npm ci` and the upstream lockfile. npm and its unused package dependencies are
+removed before verification and packing. Consumers launch the backend directly
+with Node.js, rather than `npm start`.
+
+Release assets include final package versions and public build provenance
+(source commit, clean/dirty state, build input hashes, pins and builder versions).
+Archive ordering and timestamps are normalized to the source commit timestamp;
+single-threaded zstd bounds compression concurrency. This is a repeatable
+pinned-input build, not a claim of bit-identical output: npm scripts and
+package-generated file contents can vary.
 
 Use release tags `vMAJOR.MINOR.PATCH` (an optional prerelease suffix is allowed).
 Publishing a GitHub Release triggers a build of that release's tag. The build
@@ -29,6 +38,7 @@ with release-write permission attaches:
 - `debian-13-csi-storage-amd64_<version>.tar.zst`
 - `template.json` (the public configuration contract)
 - `packages.tsv` (the actual installed package versions)
+- `build-info.json` (also installed in `/usr/share/csi-storage/`)
 - `SHA256SUMS`
 
 PR/main/manual builds produce temporary Actions artifacts only. A failed build
@@ -38,10 +48,12 @@ Actions are pinned to full commit IDs. GitHub's default workflow token suffices;
 no Proxmox credentials or customer secrets belong in Actions.
 
 For a local build, use an isolated Linux root builder with `mmdebstrap`,
-`debian-archive-keyring`, `zstd`, Python 3, Git and curl installed:
+`debian-archive-keyring`, `zstd`, Python 3, Git, curl, unzip, util-linux
+and ShellCheck installed:
 
 ```sh
-shellcheck scripts/build.sh
+bash -n scripts/*.sh
+shellcheck scripts/*.sh
 python3 -B -m unittest discover -s tests
 sudo scripts/build.sh v0.1.0-dev /absolute/external/new-output-directory
 python3 scripts/verify.py --archive /absolute/external/new-output-directory/debian-13-csi-storage-amd64_v0.1.0-dev.tar.zst
@@ -89,6 +101,20 @@ and does not exempt arbitrary binaries. Those public vectors authenticate no
 consumer.
 
 Archive verification checks identity/configuration leaks and activation masks.
+The build also imports the actual backend driver after npm removal and executes
+the gatekeeper's no-argument usage branch inside the rootfs (expected exit 64).
+This catches missing dynamic loaders, libraries and application dependencies
+without configuring or activating storage. Archive checks require matching build
+provenance and reject shipped Git/npm build tools.
 It does not prove Proxmox boot, SSH uniqueness, provider integration, CSI/PVC
 functionality, snapshots or recovery. Those require a separate bounded live
 acceptance batch on a real host. Record actual build/live results separately.
+
+## Alpine migration assessment
+
+The Alpine/OpenRC build in [lxc-wireguard v0.1.0](https://github.com/fischerscode/lxc-wireguard/tree/v0.1.0)
+is a useful reference for verified inputs, build provenance and normalized archive
+metadata. This image retains Debian because its pinned gatekeeper v0.1.1 is a
+glibc executable. See [the migration assessment](docs/alpine-assessment.md) for
+the binary evidence and prerequisites. Lower disk usage from removing build
+tools does not establish lower guest RAM usage; measure that in live acceptance.

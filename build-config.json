@@ -4,6 +4,7 @@
   "debian_snapshot": "20261013T000000Z",
   "architecture": "amd64",
   "democratic_csi_commit": "6af367fbb6f90b4a4cbd4ab026d8d77e764039f8",
+  "democratic_csi_source_sha256": "4e5992ce5a3474db1795d74dd3757b494dd43bc23d4445b9659f30d0f3b33268",
   "democratic_csi_driver_sha256": "a5f7c0e9cfd5f96956593ec67919a5e19af477a8279a4090bed7d2c9042a6c5c",
   "gatekeeper_version": "0.1.1",
   "gatekeeper_url": "https://github.com/fischerscode/csi-gatekeeper/releases/download/v0.1.1/csi-gatekeeper-0.1.1-linux-x64.zip",

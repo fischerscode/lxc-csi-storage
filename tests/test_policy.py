@@ -19,6 +19,8 @@ def clean():
     files = {'etc/machine-id': b'', 'etc/shadow': b'root:!:0:0:0:0:::\n',
              'etc/systemd/system/csi-storage-ssh-host-keys.service': b'ExecStart=/usr/bin/ssh-keygen -A',
              'usr/share/csi-storage/template.json': json.dumps(manifest).encode(),
+             'usr/share/csi-storage/build-info.json': json.dumps({
+                 'schema_version': 1, 'template_version': 'v0.0.0-test'}).encode(),
              'opt/csi-gatekeeper/csi-gatekeeper': b'PUBLIC TEST EXECUTABLE PLACEHOLDER',
              'opt/democratic-csi/package-lock.json': b'{}',
              'opt/democratic-csi/node_modules/@grpc/grpc-js/package.json': b'{}',
@@ -33,9 +35,24 @@ class PolicyTests(unittest.TestCase):
     def test_instance_data_and_archive_escapes(self):
         for path in ['root/.ssh/authorized_keys', 'etc/ssh/ssh_host_ed25519_key',
                      'etc/csi-storage/customer.json', 'var/lib/csi-lio/shared.json',
+                     'opt/democratic-csi/.git/config', 'usr/share/nodejs/npm/package.json',
+                     'usr/bin/npm', 'usr/bin/npx', 'usr/bin/git',
                      '../outside', '/etc/passwd']:
             with self.subTest(path=path), self.assertRaises(ValueError):
                 module.verify(clean() + [(path, 'file', '', b'PUBLIC TEST PLACEHOLDER')])
+
+    def test_missing_or_mismatched_provenance(self):
+        path = 'usr/share/csi-storage/build-info.json'
+        with self.assertRaises(ValueError):
+            module.verify([entry for entry in clean() if entry[0] != path])
+        entries = [(n,k,l,b'{"schema_version":1,"template_version":"v9.0.0"}'
+                    if n == path else data) for n,k,l,data in clean()]
+        with self.assertRaises(ValueError):
+            module.verify(entries)
+
+    def test_build_tool_symlinks_are_also_rejected(self):
+        with self.assertRaises(ValueError):
+            module.verify(clean()+[('usr/bin/npm', 'symlink', '../share/nodejs/npm/bin/npm-cli.js', b'')])
 
     def test_device_and_hardlink_escape(self):
         for entry in [('dev/zfs', 'unsupported', '', b''), ('copy', 'hardlink', '../secret', b'')]:
