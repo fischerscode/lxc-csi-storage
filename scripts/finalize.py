@@ -68,6 +68,8 @@ def finalize(root, version, config):
         remove(p)
     for path in ['etc/machine-id', 'var/lib/dbus/machine-id', 'root/.ssh',
                  'root/.npm', 'root/.cache', 'root/.ash_history', 'root/.bash_history',
+                 # apk del can leave generated/untracked files below npm's tree.
+                 'usr/lib/node_modules/npm',
                  'opt/democratic-csi/node_modules/ssh2/test',
                  'etc/csi-storage', 'etc/csi-credentials', 'var/lib/csi-lio',
                  'var/lib/csi-lio-shared', 'var/lib/seedrng', 'var/lib/nfs/etab',

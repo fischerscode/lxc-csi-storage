@@ -10,6 +10,23 @@ from verify import root_entries, verify
 
 
 class FinalizeTests(unittest.TestCase):
+    def test_npm_residue_is_removed_without_touching_application_dependencies(self):
+        for populated in (False, True):
+            with self.subTest(populated=populated), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                prepare(root)
+                residue = root / 'usr/lib/node_modules/npm'
+                residue.mkdir(parents=True)
+                if populated:
+                    (residue / 'untracked-build-file').write_text('PUBLIC TEST PLACEHOLDER')
+                with self.assertRaises(ValueError):
+                    verify(root_entries(root))
+                config = json.loads((ROOT / 'build-config.json').read_text())
+                finalize(root, 'v0.0.0-test', config)
+                self.assertFalse(residue.exists())
+                self.assertTrue((root / 'opt/democratic-csi/node_modules/@grpc/grpc-js/package.json').is_file())
+                self.assertFalse(verify(root_entries(root))['configured'])
+
     def test_identity_cleanup_and_first_boot_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,5 +1,16 @@
 # Local validation record
 
+## 2026-10-16: CI npm residue cleanup
+
+[The first Alpine CI run](https://github.com/fischerscode/lxc-csi-storage/actions/runs/38939996790)
+successfully installed the authenticated base/APKs, ran npm installation and both
+gatekeeper runtime profiles, pruned to 159 packages and passed the final runtime
+smoke check. Rootfs verification then rejected a residual
+`usr/lib/node_modules/npm` directory. Finalization now explicitly removes that
+build-only tree after APK removal. Regression coverage rejects both empty and
+populated residue before cleanup, verifies cleanup and preserves the backend's
+production dependencies. Archive policy remains unchanged.
+
 ## 2026-10-16: Alpine/gcompat follow-up and migration
 
 Passed local checks:
