@@ -1,5 +1,46 @@
 # Local validation record
 
+## 2026-10-16: Alpine/gcompat follow-up and migration
+
+Passed local checks:
+
+- Bash syntax, ShellCheck, 15 Python unit/regression tests and `git diff --check`.
+- Official Alpine 3.24.2 minirootfs SHA-256 and detached release signature.
+- All 167 locked APK hashes and signatures; offline installation and pruning
+  result in exactly the locked 159 runtime package versions.
+- `npm ci --omit=dev` installed the upstream lockfile (194 packages). The actual
+  backend driver imports successfully after build package removal and cleanup.
+- Original gatekeeper v0.1.1 with gcompat 1.1.0-r4 passed the external executable
+  probe for NFS and iSCSI: 5,600 repeated/concurrent Probe RPCs total, plus mTLS,
+  pinning, trust/hostname rejection, Unix backend forwarding, policy and metadata
+  checks, sanitized backend errors, restart, SIGTERM/SIGINT and malformed config.
+- A native musl executable compiled from the unchanged v0.1.1 source with the
+  checksum-verified community musl Dart SDK 3.13.4. It passed the same external
+  probe. All 50 upstream tests passed under that SDK after adding zip/unzip.
+- Packaged OpenRC `sshd checkconfig` passed twice and generated different
+  ed25519 host key fingerprints; the keys were then removed. No sshd was started.
+- The post-cleanup runtime check passes with a private proc mount (required by
+  the gcompat loader). Final rootfs policy and compressed archive content checks
+  pass. The local content-check archive is about 59 MiB, from a 217 MiB tar stream;
+  this is not a measured saving relative to a comparable Debian image.
+
+Scope and limits: these experiments used isolated user/mount namespaces and
+public inputs in disposable temporary directories. The production builder still
+requires real root with full owner/group preservation. Noninteractive sudo is
+unavailable here. The single-ID user namespace cannot preserve the base shadow
+file's group or two APK owners (`usr/libexec/dbus-daemon-launch-helper` and
+`var/lib/nfs/state`). APK installation/pruning reports those ownership errors.
+They were not suppressed or accepted by the production build script, which fails
+on APK errors. Therefore the local archive validates content and policy only;
+it is not a release candidate or proof of a successful complete root build.
+CI or a disposable root builder must run `scripts/build.sh` unchanged before
+release. No experimental SDK, binary, certificates, rootfs or archive is committed.
+
+Live acceptance: no Proxmox guest boot, host storage access, NFS/LIO integration,
+real gatekeeper-to-storage mTLS, CSI/PVC lifecycle, snapshot or recovery test was
+performed. No host configuration was changed. These require separately bounded
+real targets. No RAM, throughput or comparative resource saving is claimed.
+
 ## 2026-10-16: build slimming and Alpine assessment
 
 Local checks passed:

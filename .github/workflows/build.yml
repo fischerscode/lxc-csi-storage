@@ -23,7 +23,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends mmdebstrap debian-archive-keyring zstd shellcheck unzip curl git python3 util-linux
+          sudo apt-get install -y --no-install-recommends gnupg zstd shellcheck unzip curl git python3 util-linux
       - name: Check scripts and policy tests
         run: |
           bash -n scripts/*.sh

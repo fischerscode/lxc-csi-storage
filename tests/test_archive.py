@@ -20,7 +20,10 @@ class ArchiveTests(unittest.TestCase):
         with tarfile.open(fileobj=stream, mode='w') as archive:
             for name, kind, link, data in clean():
                 entry = tarfile.TarInfo(name)
-                if kind == 'symlink':
+                if kind == 'dir':
+                    entry.type = tarfile.DIRTYPE
+                    archive.addfile(entry)
+                elif kind == 'symlink':
                     entry.type = tarfile.SYMTYPE
                     entry.linkname = link
                     archive.addfile(entry)

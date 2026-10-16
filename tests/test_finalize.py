@@ -1,37 +1,36 @@
-"""Finalization removes instance identities and preserves safe first-boot behavior."""
-import importlib.util
+"""Finalization removes instance data and installs safe Alpine boot behavior."""
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('finalizer', ROOT / 'scripts/finalize.py')
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+from fixtures import prepare, ROOT
+from finalize import BLOCKED_SERVICES, finalize
+from verify import root_entries, verify
 
 
 class FinalizeTests(unittest.TestCase):
     def test_identity_cleanup_and_first_boot_contract(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            for folder in ['etc/systemd/system','etc/ssh','root/.ssh','var/lib/csi-lio','tmp','var/tmp','dev']:
-                (root/folder).mkdir(parents=True)
-            for name in ['etc/ssh/ssh_host_ed25519_key','root/.ssh/authorized_keys',
-                         'var/lib/csi-lio/manifest.json','etc/machine-id','etc/resolv.conf','dev/bootstrap-placeholder']:
-                (root/name).write_text('PUBLIC TEST PLACEHOLDER')
-            config = json.loads((ROOT/'build-config.json').read_text())
-            module.finalize(root,'v0.1.0-test',config)
-            self.assertEqual((root/'etc/machine-id').read_text(),'')
-            self.assertEqual((root/'etc/resolv.conf').read_text(),'')
-            self.assertFalse((root/'root/.ssh').exists())
-            self.assertFalse((root/'var/lib/csi-lio').exists())
-            self.assertEqual(list((root/'dev').iterdir()),[])
-            self.assertEqual(list((root/'etc/ssh').glob('ssh_host_*')),[])
-            for mask in module.MASKS:
-                self.assertEqual((root/'etc/systemd/system'/mask).readlink().as_posix(),'/dev/null')
-            policy = (root/'etc/ssh/sshd_config.d/10-csi-storage-template.conf').read_text()
-            self.assertIn('PasswordAuthentication no',policy)
-            self.assertIn('ssh-keygen -A',(root/'etc/systemd/system/csi-storage-ssh-host-keys.service').read_text())
-            self.assertNotIn('Check-Valid-Until',(root/'etc/apt/sources.list.d/csi-storage.sources').read_text())
-            self.assertFalse(json.loads((root/'usr/share/csi-storage/template.json').read_text())['configured'])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prepare(root)
+            for name in ['etc/ssh/ssh_host_ed25519_key', 'root/.ssh/authorized_keys',
+                         'var/lib/csi-lio/manifest.json', 'etc/machine-id',
+                         'var/lib/dbus/machine-id', 'dev/bootstrap-placeholder', 'tmp/test.key']:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('PUBLIC TEST PLACEHOLDER')
+            config = json.loads((ROOT / 'build-config.json').read_text())
+            finalize(root, 'v0.0.0-test', config)
+            self.assertFalse((root / 'etc/machine-id').exists())
+            self.assertFalse((root / 'var/lib/dbus/machine-id').exists())
+            self.assertFalse((root / 'root/.ssh').exists())
+            self.assertFalse((root / 'var/lib/csi-lio').exists())
+            self.assertEqual(list((root / 'dev').iterdir()), [])
+            self.assertEqual(list((root / 'tmp').iterdir()), [])
+            self.assertEqual(list((root / 'etc/ssh').glob('ssh_host_*')), [])
+            for service in BLOCKED_SERVICES:
+                self.assertEqual((root / 'etc/init.d' / service).readlink().as_posix(), '/dev/null')
+            self.assertEqual((root / 'etc/conf.d/sshd').read_text(), 'sshd_disable_keygen="no"\n')
+            self.assertEqual((root / 'etc/inittab').read_text().count('::respawn:/sbin/getty 38400 console'), 1)
+            self.assertFalse(verify(root_entries(root))['configured'])

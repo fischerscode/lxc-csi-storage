@@ -16,6 +16,7 @@ def command(*args):
 def build_info(version):
     inputs = [REPO / 'build-config.json', *sorted((REPO / 'scripts').glob('*.sh')),
               *sorted((REPO / 'scripts').glob('*.py'))]
+    inputs += [p for p in (REPO / 'packages.lock', REPO / 'keys/alpine-release.asc') if p.exists()]
     return {
         'schema_version': 1,
         'template_version': version,
@@ -27,7 +28,7 @@ def build_info(version):
                          hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs},
         'pins': json.loads((REPO / 'build-config.json').read_text()),
         'builder_tools': {tool: command(tool, '--version').splitlines()[0]
-                          for tool in ('mmdebstrap', 'tar', 'zstd')},
+                          for tool in ('gpgv', 'tar', 'zstd')},
     }
 
 

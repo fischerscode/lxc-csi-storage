@@ -1,7 +1,5 @@
 {
   "schema_version": 1,
-  "debian_suite": "trixie",
-  "debian_snapshot": "20261013T000000Z",
   "architecture": "amd64",
   "democratic_csi_commit": "6af367fbb6f90b4a4cbd4ab026d8d77e764039f8",
   "democratic_csi_source_sha256": "4e5992ce5a3474db1795d74dd3757b494dd43bc23d4445b9659f30d0f3b33268",
@@ -9,9 +7,31 @@
   "gatekeeper_version": "0.1.1",
   "gatekeeper_url": "https://github.com/fischerscode/csi-gatekeeper/releases/download/v0.1.1/csi-gatekeeper-0.1.1-linux-x64.zip",
   "gatekeeper_sha256": "e65398b435b94a93bb73733b97672a52451e66d0aa9a28d37be44d399cf5e838",
-  "public_self_test_files_sha256": {
-    "usr/lib/x86_64-linux-gnu/libgnutls.so.30.40.3": "4b14edde42e7cbeefd8a6d88d035e096f2e6412a535388bb1d073a1c196e2822"
-  },
-  "debian_keyring_url": "https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb",
-  "debian_keyring_sha256": "9ea7778e443144ca490668737a8ab22dd3e748bb99e805e22ec055abeb3c7fac"
+  "alpine_branch": "v3.24",
+  "alpine_version": "3.24.2",
+  "alpine_architecture": "x86_64",
+  "alpine_mirror": "https://dl-cdn.alpinelinux.org/alpine",
+  "alpine_minirootfs_sha256": "c5ca053cfe1d85c5b96dff8b9bc57045f7f184a30ffb6b65776409ca90388677",
+  "alpine_release_key_fingerprint": "0482D84022F52DF1C4E7CD43293ACD0907D9495A",
+  "runtime_packages": [
+    "alpine-base",
+    "openssh",
+    "iproute2",
+    "iputils-ping",
+    "procps-ng",
+    "ca-certificates",
+    "curl",
+    "python3",
+    "nodejs",
+    "gcompat",
+    "zfs",
+    "nfs-utils",
+    "targetcli",
+    "nftables"
+  ],
+  "build_packages": [
+    "npm",
+    "py3-h2",
+    "openssl"
+  ]
 }

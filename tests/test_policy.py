@@ -1,42 +1,34 @@
-"""Reject identity leaks, unsafe archive entries and active storage defaults."""
-import importlib.util
+"""Reject identities, active storage, incompatible packages and unsafe archives."""
 from pathlib import Path
+import tempfile
 import unittest
-import sys
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'scripts'))
-spec = importlib.util.spec_from_file_location('verify', ROOT / 'scripts/verify.py')
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+from fixtures import prepare
+import verify as module
 
 
 def clean():
-    import json
-    manifest = {'schema_version': 1, 'template_version': 'v0.0.0-test',
-                'configuration_contract': 'csi-storage-template/v1', 'configured': False,
-                'masked_units': list(module.MASKS)}
-    files = {'etc/machine-id': b'', 'etc/shadow': b'root:!:0:0:0:0:::\n',
-             'etc/systemd/system/csi-storage-ssh-host-keys.service': b'ExecStart=/usr/bin/ssh-keygen -A',
-             'usr/share/csi-storage/template.json': json.dumps(manifest).encode(),
-             'usr/share/csi-storage/build-info.json': json.dumps({
-                 'schema_version': 1, 'template_version': 'v0.0.0-test'}).encode(),
-             'opt/csi-gatekeeper/csi-gatekeeper': b'PUBLIC TEST EXECUTABLE PLACEHOLDER',
-             'opt/democratic-csi/package-lock.json': b'{}',
-             'opt/democratic-csi/node_modules/@grpc/grpc-js/package.json': b'{}',
-             'etc/ssh/sshd_config.d/10-csi-storage-template.conf': b'PasswordAuthentication no'}
-    return [(n, 'file', '', v) for n, v in files.items()] + [('etc/systemd/system/'+n, 'symlink', '/dev/null', b'') for n in manifest['masked_units']]
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        prepare(root)
+        return list(module.root_entries(root))
+
+
+def replace(entries, path, data):
+    return [(n, k, l, data if n == path else old) for n, k, l, old in entries]
 
 
 class PolicyTests(unittest.TestCase):
-    def test_clean_contract_and_merged_usr_symlink(self):
-        self.assertFalse(module.verify(clean() + [('bin', 'symlink', 'usr/bin', b'')])['configured'])
+    def test_clean_alpine_contract(self):
+        self.assertFalse(module.verify(clean())['configured'])
 
-    def test_instance_data_and_archive_escapes(self):
+    def test_instance_data_build_tools_and_archive_escapes(self):
         for path in ['root/.ssh/authorized_keys', 'etc/ssh/ssh_host_ed25519_key',
                      'etc/csi-storage/customer.json', 'var/lib/csi-lio/shared.json',
-                     'opt/democratic-csi/.git/config', 'usr/share/nodejs/npm/package.json',
-                     'usr/bin/npm', 'usr/bin/npx', 'usr/bin/git',
+                     'opt/democratic-csi/.git/config', 'usr/lib/node_modules/npm/package.json',
+                     'usr/bin/npm', 'usr/bin/npx', 'usr/bin/git', 'etc/machine-id',
+                     'var/lib/dbus/machine-id', 'tmp/forgotten-test.key', 'run/sshd.pid',
+                     'etc/network/interfaces.d/customer', 'etc/systemd/system/storage.service',
                      '../outside', '/etc/passwd']:
             with self.subTest(path=path), self.assertRaises(ValueError):
                 module.verify(clean() + [(path, 'file', '', b'PUBLIC TEST PLACEHOLDER')])
@@ -45,59 +37,42 @@ class PolicyTests(unittest.TestCase):
         path = 'usr/share/csi-storage/build-info.json'
         with self.assertRaises(ValueError):
             module.verify([entry for entry in clean() if entry[0] != path])
-        entries = [(n,k,l,b'{"schema_version":1,"template_version":"v9.0.0"}'
-                    if n == path else data) for n,k,l,data in clean()]
         with self.assertRaises(ValueError):
-            module.verify(entries)
+            module.verify(replace(clean(), path, b'{"schema_version":1,"template_version":"v9.0.0"}'))
 
     def test_build_tool_symlinks_are_also_rejected(self):
         with self.assertRaises(ValueError):
-            module.verify(clean()+[('usr/bin/npm', 'symlink', '../share/nodejs/npm/bin/npm-cli.js', b'')])
+            module.verify(clean()+[('usr/bin/npm', 'symlink', '../lib/node_modules/npm/bin/npm-cli.js', b'')])
 
-    def test_device_and_hardlink_escape(self):
-        for entry in [('dev/zfs', 'unsupported', '', b''), ('copy', 'hardlink', '../secret', b'')]:
+    def test_device_hardlink_escape_and_duplicate(self):
+        for entry in [('dev/zfs', 'unsupported', '', b''), ('copy', 'hardlink', '../secret', b''),
+                      ('etc/shadow', 'file', '', b'')]:
             with self.assertRaises(ValueError):
                 module.verify(clean()+[entry])
 
-    def test_machine_identity_and_missing_mask(self):
-        entries = clean()
-        entries = [(n, k, l, b'public-test-machine-id' if n == 'etc/machine-id' else v) for n,k,l,v in entries]
+    def test_missing_block_or_enabled_storage(self):
         with self.assertRaises(ValueError):
-            module.verify(entries)
+            module.verify([entry for entry in clean() if entry[0] != 'etc/init.d/targetcli'])
         with self.assertRaises(ValueError):
-            module.verify([e for e in clean() if e[0] != 'etc/systemd/system/nfs-server.service'])
+            module.verify(clean()+[('etc/runlevels/default/nfs', 'symlink', '/etc/init.d/nfs', b'')])
 
-    def test_duplicate_paths_and_account_password(self):
-        with self.assertRaises(ValueError):
-            module.verify(clean()+[('etc/machine-id','file','',b'')])
-        entries = [(n,k,l,b'root:REPLACE_WITH_PASSWORD_HASH:0:0:0:0:::\n' if n=='etc/shadow' else v) for n,k,l,v in clean()]
-        with self.assertRaises(ValueError):
-            module.verify(entries)
-
-    def test_nested_wants_link_cannot_override_canonical_mask(self):
-        entries = clean()+[('etc/systemd/system/zfs-import.target.wants/zfs-import-cache.service',
-                           'symlink', '/usr/lib/systemd/system/zfs-import-cache.service', b'')]
-        self.assertFalse(module.verify(entries)['configured'])
-
-    def test_mask_contract_cannot_omit_required_units(self):
-        import json
-        entries = []
-        for n,k,l,data in clean():
-            if n == 'usr/share/csi-storage/template.json':
-                v = json.loads(data); v['masked_units'] = []; data = json.dumps(v).encode()
-            entries.append((n,k,l,data))
-        with self.assertRaises(ValueError):
-            module.verify(entries)
-
-    def test_private_material_only_permits_exact_public_selftest_elf(self):
-        import hashlib
-        from unittest.mock import patch
-        # Construct an inert detector fixture at runtime; it is not a key.
-        data = b'\x7fELF' + b'-----' + b'BEGIN PRIVATE KEY-----\n' + b'A'*64 + b'\n-----' + b'END PRIVATE KEY-----'
-        path = 'usr/lib/public-test-library.so'
-        with self.assertRaises(ValueError):
-            module.verify(clean()+[(path,'file','',data)])
-        with patch.dict(module.PUBLIC_SELF_TEST_HASHES, {path:hashlib.sha256(data).hexdigest()}):
-            self.assertFalse(module.verify(clean()+[(path,'file','',data)])['configured'])
+    def test_account_password_and_unusable_root(self):
+        for shadow in (b'root:REPLACE_WITH_PASSWORD_HASH:0:0:0:0:::\n', b'root:!:0:0:0:0:::\n'):
             with self.assertRaises(ValueError):
-                module.verify(clean()+[(path,'file','',data+b'changed')])
+                module.verify(replace(clean(), 'etc/shadow', shadow))
+
+    def test_runtime_package_drift(self):
+        path = 'lib/apk/db/installed'
+        for data in (b'', b'P:gcompat\nV:0.0.0-r0\nA:x86_64'):
+            with self.assertRaises(ValueError):
+                module.verify(replace(clean(), path, data))
+
+    def test_ssh_policy_requires_active_include_and_key_generation(self):
+        for path in ('etc/ssh/sshd_config', 'etc/init.d/sshd', 'etc/conf.d/sshd'):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                module.verify(replace(clean(), path, b'# disabled\n'))
+
+    def test_private_material_has_no_elf_exemptions(self):
+        data = b'\x7fELF' + b'-----' + b'BEGIN PRIVATE KEY-----\n' + b'A'*64 + b'\n-----' + b'END PRIVATE KEY-----'
+        with self.assertRaises(ValueError):
+            module.verify(clean()+[('usr/lib/public-test-library.so', 'file', '', data)])

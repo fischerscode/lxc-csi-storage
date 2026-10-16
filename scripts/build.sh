@@ -9,11 +9,10 @@ out=${2:?External output directory required}
 out=$(realpath -m -- "$out")
 [[ $out != / && $out != "$repo" && $out != "$repo/"* ]] || { echo 'Output must be outside the checkout' >&2; exit 1; }
 [[ ! -e $out ]] || { echo 'Output directory must be new' >&2; exit 1; }
-for tool in mmdebstrap dpkg-deb curl sha256sum unzip zstd python3 git chroot tar unshare; do
+for tool in curl gpg gpgv sha256sum unzip zstd python3 git chroot tar unshare; do
  command -v "$tool" >/dev/null
 done
-export LC_ALL=C TZ=UTC
-export SOURCE_DATE_EPOCH
+export LC_ALL=C TZ=UTC SOURCE_DATE_EPOCH
 SOURCE_DATE_EPOCH=$(git -C "$repo" log -1 --format=%ct)
 mkdir -p -- "$(dirname -- "$out")"
 mkdir -m 0700 -- "$out"
@@ -24,76 +23,70 @@ python3 "$repo/scripts/build_info.py" "$version" > "$out/build-info.json"
 readarray -t config < <(python3 - "$repo/build-config.json" <<'PY'
 import json,sys
 c=json.load(open(sys.argv[1]))
-for key in ['debian_suite','debian_snapshot','architecture','democratic_csi_commit','gatekeeper_url','gatekeeper_sha256','democratic_csi_driver_sha256','gatekeeper_version','debian_keyring_url','debian_keyring_sha256','democratic_csi_source_sha256']:
+for key in ['alpine_branch','alpine_version','alpine_architecture','alpine_mirror',
+            'alpine_minirootfs_sha256','alpine_release_key_fingerprint',
+            'democratic_csi_commit','democratic_csi_source_sha256',
+            'democratic_csi_driver_sha256','gatekeeper_url','gatekeeper_sha256','gatekeeper_version']:
  print(c[key])
+print(' '.join(c['runtime_packages']))
+print(' '.join(c['build_packages']))
 PY
 )
-suite=${config[0]}; snapshot=${config[1]}; arch=${config[2]}; commit=${config[3]}
-curl --fail --location --proto '=https' --tlsv1.2 --retry 3 "${config[8]}" -o "$work/keyring.deb"
-printf '%s  %s\n' "${config[9]}" "$work/keyring.deb" | sha256sum --check --status
-dpkg-deb -x "$work/keyring.deb" "$work/keyring"
-runtime_packages=systemd-sysv,dbus,ifupdown,openssh-server,iproute2,iputils-ping,procps,ca-certificates,curl,python3,nodejs,zfsutils-linux,nfs-kernel-server,targetcli-fb,nftables
-# Archive freshness is intentionally disabled for the immutable snapshot;
-# package signatures and HTTPS certificate verification remain mandatory.
-# Hook variables are expanded by mmdebstrap, not by this shell.
-# shellcheck disable=SC2016
-mmdebstrap --mode=root --variant=minbase --architectures="$arch" --components=main,contrib \
- --keyring="$work/keyring/usr/share/keyrings/debian-archive-keyring.gpg" \
- --aptopt='Acquire::Check-Valid-Until "false"' --aptopt='Acquire::Retries "3"' \
- --aptopt='Acquire::Languages "none"' --aptopt='APT::Sandbox::User "root"' \
- --include="$runtime_packages,npm" \
- --setup-hook='mkdir -p "$1/etc/ssl/certs"' \
- --setup-hook='copy-in /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/' \
- "$suite" "$rootfs" \
- "deb https://snapshot.debian.org/archive/debian/$snapshot/ $suite main contrib" \
- "deb https://snapshot.debian.org/archive/debian/$snapshot/ $suite-updates main contrib" \
- "deb https://snapshot.debian.org/archive/debian-security/$snapshot/ $suite-security main contrib"
-# mmdebstrap blocks package services during installation. No ZFS DKMS/kernel is installed.
-curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
- "https://codeload.github.com/democratic-csi/democratic-csi/tar.gz/$commit" -o "$work/democratic-csi.tar.gz"
-printf '%s  %s\n' "${config[10]}" "$work/democratic-csi.tar.gz" | sha256sum --check --status
+branch=${config[0]}; alpine_version=${config[1]}; arch=${config[2]}; mirror=${config[3]}
+download() { curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --connect-timeout 20 --max-time 300 "$1" -o "$2"; }
+base="$mirror/$branch/releases/$arch/alpine-minirootfs-$alpine_version-$arch.tar.gz"
+download "$base" "$work/base.tar.gz"
+download "$base.asc" "$work/base.tar.gz.asc"
+printf '%s  %s\n' "${config[4]}" "$work/base.tar.gz" | sha256sum --check --status
+mkdir -m 0700 "$work/gnupg"
+export GNUPGHOME=$work/gnupg
+fingerprint=$(gpg --batch --show-keys --with-colons "$repo/keys/alpine-release.asc" | awk -F: '$1 == "fpr" { print $10; exit }')
+[[ $fingerprint == "${config[5]}" ]]
+gpg --batch --dearmor -o "$work/release-key.gpg" "$repo/keys/alpine-release.asc"
+gpgv --keyring "$work/release-key.gpg" "$work/base.tar.gz.asc" "$work/base.tar.gz"
+mkdir "$rootfs"
+tar --numeric-owner -xzf "$work/base.tar.gz" -C "$rootfs"
+# Validate the entire lock before downloading; never silently resolve newer APKs.
+python3 "$repo/scripts/package_lock.py" > "$work/locked.tsv"
+while read -r checksum relative _role; do
+ mkdir -p "$rootfs/packages/$(dirname "$relative")"
+ download "$mirror/$branch/${relative%%/*}/$arch/${relative#*/}" "$rootfs/packages/$relative"
+ printf '%s  %s\n' "$checksum" "$rootfs/packages/$relative" | sha256sum --check --status
+done < "$work/locked.tsv"
+# APK verifies signatures using keys from the authenticated base and installs offline.
+chroot "$rootfs" /bin/sh -ec 'apk verify /packages/*/*.apk; apk --cache-dir /packages --no-network add /packages/*/*.apk'
+printf '%s\n' "$mirror/$branch/main" "$mirror/$branch/community" > "$rootfs/etc/apk/repositories"
+read -r -a runtime_roots <<< "${config[12]}"
+read -r -a build_roots <<< "${config[13]}"
+# Local file installs pin world to checksums. Keep only upgradeable explicit roots.
+printf '%s\n' "${runtime_roots[@]}" "${build_roots[@]}" > "$rootfs/etc/apk/world"
+download "https://codeload.github.com/democratic-csi/democratic-csi/tar.gz/${config[6]}" "$work/democratic-csi.tar.gz"
+printf '%s  %s\n' "${config[7]}" "$work/democratic-csi.tar.gz" | sha256sum --check --status
 mkdir -p "$rootfs/opt/democratic-csi"
-tar --extract --gzip --file="$work/democratic-csi.tar.gz" --strip-components=1 \
- --no-same-owner -C "$rootfs/opt/democratic-csi"
-printf '%s  %s\n' "${config[6]}" "$rootfs/opt/democratic-csi/src/driver/controller-zfs-generic/index.js" | sha256sum --check --status
-# mmdebstrap removes its temporary resolver; npm still needs build-time DNS.
+tar -xzf "$work/democratic-csi.tar.gz" --strip-components=1 --no-same-owner -C "$rootfs/opt/democratic-csi"
+printf '%s  %s\n' "${config[8]}" "$rootfs/opt/democratic-csi/src/driver/controller-zfs-generic/index.js" | sha256sum --check --status
 rm -f "$rootfs/etc/resolv.conf"
 install -m 0644 /etc/resolv.conf "$rootfs/etc/resolv.conf"
-# No runner credentials/environment are passed into application installation.
-unshare --mount --propagation private "$repo/scripts/install-node-dependencies.sh" "$rootfs"
-# Keep runtime roots before removing npm and its otherwise unused dependency tree.
-IFS=, read -r -a runtime_roots <<< "$runtime_packages"
-chroot "$rootfs" apt-mark manual "${runtime_roots[@]}"
-chroot "$rootfs" /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
- apt-get purge -y --auto-remove npm
-curl --fail --location --proto '=https' --tlsv1.2 --retry 3 "${config[4]}" -o "$work/gatekeeper.zip"
-printf '%s  %s\n' "${config[5]}" "$work/gatekeeper.zip" | sha256sum --check --status
-mkdir -p "$rootfs/opt/csi-gatekeeper"
+download "${config[9]}" "$work/gatekeeper.zip"
+printf '%s  %s\n' "${config[10]}" "$work/gatekeeper.zip" | sha256sum --check --status
 unzip -q "$work/gatekeeper.zip" -d "$work/gatekeeper"
-gatekeeperdir=$work/gatekeeper/csi-gatekeeper-${config[7]}-linux-x64
-[[ -f $gatekeeperdir/csi-gatekeeper ]] || { echo 'Unexpected gatekeeper archive layout' >&2; exit 1; }
-install -m 0755 "$gatekeeperdir/csi-gatekeeper" "$rootfs/opt/csi-gatekeeper/csi-gatekeeper"
+gatekeeperdir=$work/gatekeeper/csi-gatekeeper-${config[11]}-linux-x64
+install -D -m 0755 "$gatekeeperdir/csi-gatekeeper" "$rootfs/opt/csi-gatekeeper/csi-gatekeeper"
 mkdir -p "$rootfs/usr/share/doc/csi-gatekeeper"
 install -m 0644 "$gatekeeperdir/LICENSE" "$gatekeeperdir/THIRD_PARTY_NOTICES.txt" "$gatekeeperdir/BUILD_INFO.json" "$rootfs/usr/share/doc/csi-gatekeeper/"
-printf '%s  %s\n' "${config[6]}" "$rootfs/opt/democratic-csi/src/driver/controller-zfs-generic/index.js" | sha256sum --check --status
+install -m 0644 "$repo/scripts/check-gatekeeper-runtime.py" "$rootfs/tmp/check-gatekeeper-runtime.py"
+# Mounts and test sockets exist only inside this disposable build namespace.
+unshare --mount --propagation private "$repo/scripts/install-node-dependencies.sh" "$rootfs"
+chroot "$rootfs" apk --cache-dir /packages --no-network del "${build_roots[@]}"
+rm -rf "$rootfs/packages"
+printf '%s  %s\n' "${config[8]}" "$rootfs/opt/democratic-csi/src/driver/controller-zfs-generic/index.js" | sha256sum --check --status
 python3 "$repo/scripts/finalize.py" "$rootfs" "$version" "$repo/build-config.json"
-chroot "$rootfs" /usr/bin/node --check /opt/democratic-csi/src/driver/controller-zfs-generic/index.js
-chroot "$rootfs" /usr/bin/node -e 'require("/opt/democratic-csi/src/driver/controller-zfs-generic")'
-# No configuration argument: the real ELF/runtime must reach its usage branch.
-set +e
-chroot "$rootfs" /opt/csi-gatekeeper/csi-gatekeeper > "$work/gatekeeper-usage.txt" 2>&1
-gatekeeper_status=$?
-set -e
-if [[ $gatekeeper_status != 64 ]] || ! grep -q '^Usage: csi-gatekeeper ' "$work/gatekeeper-usage.txt"; then
- cat "$work/gatekeeper-usage.txt" >&2; echo 'Gatekeeper runtime smoke check failed' >&2; exit 1;
-fi
+# Check that cleanup did not remove required dependencies; no test identities are created.
+unshare --mount --propagation private "$repo/scripts/check-final-runtime.sh" "$rootfs"
 install -m 0644 "$out/build-info.json" "$rootfs/usr/share/csi-storage/build-info.json"
-# dpkg-query expands its own format fields.
-# shellcheck disable=SC2016
-chroot "$rootfs" /usr/bin/dpkg-query -W '-f=${binary:Package}\t${Version}\n' > "$out/packages.tsv"
+python3 "$repo/scripts/package_lock.py" --installed "$rootfs/lib/apk/db/installed" > "$out/packages.tsv"
 python3 "$repo/scripts/verify.py" --rootfs "$rootfs"
-name="debian-13-csi-storage-${arch}_${version}.tar.zst"
-# Preserve owners, xattrs, ACLs and symlinks; normalize archive metadata like lxc-wireguard.
+name="alpine-$alpine_version-csi-storage-${arch}_${version}.tar.zst"
 tar --numeric-owner --xattrs --acls --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
  --pax-option=delete=atime,delete=ctime -C "$rootfs" -cf - . | zstd -T1 -10 -o "$out/$name"
 cp "$rootfs/usr/share/csi-storage/template.json" "$out/template.json"

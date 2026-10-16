@@ -1,120 +1,134 @@
 # CSI storage LXC template
 
-Public, unconfigured Debian 13 (amd64) rootfs for a dedicated trusted
+Public, unconfigured Alpine 3.24.2 (x86_64/amd64) rootfs for a dedicated trusted
 storage container. Each customer or cluster receives an independent instance.
-Builds never export a running container or read a control-plane checkout or runtime.
+Builds start from an authenticated minirootfs and never export a running guest
+or read a consumer checkout or runtime.
 
-The image contains SSH, systemd/ifupdown, NFS tools, ZFS userspace tools,
-targetcli/LIO tools, the pinned democratic-csi upstream source and production
-npm dependencies, and the pinned csi-gatekeeper binary. It has no customer
-configuration, operational CA/client/server keys, authorized SSH keys, dataset bindings,
-exports, targets or storage manifests. It does not contain a second ZFS kernel
-or pool, and does not install ZFS DKMS.
+The image contains BusyBox init/OpenRC, ifupdown-ng, SSH, NFS tools, ZFS userspace,
+targetcli/LIO tools, pinned democratic-csi source and production npm dependencies,
+and the original pinned csi-gatekeeper release with gcompat. No guest kernel or
+ZFS kernel module is installed. Consumers provide reviewed overlays, configuration,
+keys, datasets, exports, targets and host bindings after instantiation.
 
 ## Build and releases
 
-`build-config.json` pins a signed Debian snapshot, backend commit/source digest
-and gatekeeper release/archive digest. The bootstrap archive keyring is also
-HTTPS-downloaded and hash-pinned, independently of the Ubuntu runner keyring.
-The backend is downloaded as a checksum-pinned upstream source archive; no Git
-history or Git executable is installed in the image. Dependency installation uses
-`npm ci` and the upstream lockfile. npm and its unused package dependencies are
-removed before verification and packing. Consumers launch the backend directly
-with Node.js, rather than `npm start`.
+`build-config.json` pins the base archive and signing-key fingerprint, application
+sources and release digests. `packages.lock` pins the complete Alpine main/community
+APK dependency closure by version and SHA-256, with separate runtime/build roles.
+The base signature is checked against the committed public release key. APK
+signatures are checked with the keys from that authenticated base; installation
+is offline, with no untrusted or force flags. Removed upstream APK versions cause
+a build failure, rather than a silent dependency update.
 
-Release assets include final package versions and public build provenance
-(source commit, clean/dirty state, build input hashes, pins and builder versions).
-Archive ordering and timestamps are normalized to the source commit timestamp;
-single-threaded zstd bounds compression concurrency. This is a repeatable
-pinned-input build, not a claim of bit-identical output: npm scripts and
-package-generated file contents can vary.
+The backend source archive contains no Git history. `npm ci --omit=dev` uses its
+upstream lockfile. npm, openssl and the HTTP/2 probe dependencies are build-only
+and removed before packing. Consumers launch the backend directly with Node.js,
+rather than `npm start`. Runtime repositories and APK world permit normal signed
+updates on the pinned stable Alpine branch; update validation is the operator's
+responsibility.
 
-Use release tags `vMAJOR.MINOR.PATCH` (an optional prerelease suffix is allowed).
-Publishing a GitHub Release triggers a build of that release's tag. The build
-job has read-only repository permissions, checks scripts/tests, creates the
-rootfs and verifies it before packing and again after packing. A separate job
-with release-write permission attaches:
+Release tags use `vMAJOR.MINOR.PATCH`, optionally with a prerelease suffix.
+Publishing a GitHub Release triggers a build of that release tag. Read-only build
+jobs run local checks, build the rootfs, test the real applications and verify the
+rootfs and final archive. A separate release-write job attaches:
 
-- `debian-13-csi-storage-amd64_<version>.tar.zst`
-- `template.json` (the public configuration contract)
-- `packages.tsv` (the actual installed package versions)
+- `alpine-3.24.2-csi-storage-x86_64_<version>.tar.zst`
+- `template.json` (configuration contract)
+- `packages.tsv` (final installed package versions)
 - `build-info.json` (also installed in `/usr/share/csi-storage/`)
 - `SHA256SUMS`
 
-PR/main/manual builds produce temporary Actions artifacts only. A failed build
-uploads no release files. Uploads do not overwrite existing assets; delete an
-explicitly reviewed failed release's assets before deliberately rebuilding it.
-Actions are pinned to full commit IDs. GitHub's default workflow token suffices;
-no Proxmox credentials or customer secrets belong in Actions.
+PR/main/manual builds produce temporary Actions artifacts only. Failed builds
+upload no release files. Existing release assets are never overwritten. Actions
+are pinned to full commits. No Proxmox credentials or consumer secrets belong in
+Actions. Build provenance records the source commit, dirty state, input hashes,
+pins and tool versions. Tar ordering and timestamps are normalized to the source
+commit timestamp and zstd uses one thread. Package-generated file contents and
+npm scripts can still vary; bit-identical output is not promised.
 
-For a local build, use an isolated Linux root builder with `mmdebstrap`,
-`debian-archive-keyring`, `zstd`, Python 3, Git, curl, unzip, util-linux
-and ShellCheck installed:
+On a disposable x86_64 Linux root builder, install curl, CA certificates, GnuPG,
+zstd, Python 3, Git, unzip, util-linux and ShellCheck, then run:
 
 ```sh
 bash -n scripts/*.sh
 shellcheck scripts/*.sh
-python3 -B -m unittest discover -s tests
+python3 -B -m unittest discover -s tests -v
 sudo scripts/build.sh v0.1.0-dev /absolute/external/new-output-directory
-python3 scripts/verify.py --archive /absolute/external/new-output-directory/debian-13-csi-storage-amd64_v0.1.0-dev.tar.zst
+python3 -B scripts/verify.py --archive /absolute/external/new-output-directory/alpine-3.24.2-csi-storage-x86_64_v0.1.0-dev.tar.zst
 ```
 
-The output directory must be new and outside the checkout. A failed build keeps
-its hidden work directory there for diagnosis; do not publish that directory.
-The snapshot build disables archive freshness checks while retaining signature
-and HTTPS validation. The resulting guest uses normal current signed Debian
-repositories and normal expiry checking for subsequent operator updates.
+The output directory must be new and outside the checkout. Failed builds retain
+a hidden work directory for diagnosis; never publish that directory. The builder
+needs root, private mount namespaces, loopback/Unix sockets and network access.
+No service is started against host storage. Temporary test credentials, sockets,
+resolver configuration, APK downloads, host keys and caches are removed.
 
-## Instance configuration contract: v1
+To update packages, resolve runtime roots and runtime plus build roots from
+`build-config.json` separately in a fresh authenticated Alpine rootfs using
+`apk fetch --no-cache --recursive --url`. Download the complete sets, verify APK
+signatures, record SHA-256 and `main/filename.apk` or `community/filename.apk`,
+and label the runtime closure `runtime` and the remaining closure `build`.
+Review the lock diff and run a complete clean build; never reuse WireGuard's
+smaller package lock for storage.
 
-`/usr/share/csi-storage/template.json` identifies the image version, application
-pins and required host bindings. The backend source is upstream, without consumer
-portal/persistence overlays. A consumer installer applies and verifies its own
-reviewed overlays. This repository imports no control-plane implementation.
+## Instance configuration contract: v2
 
-The consumer creates the LXC, injects the operator public key and instance network
-configuration, then provides configuration over operator SSH. Cluster clients
-never receive that SSH access. The consumer supplies the privileged LXC device/mount
-permissions, owning dataset mount, `/dev/zfs`, owning ZVOL access, LIO target
-configfs and the common host-backed persistence lock. The host owns discovery
-authentication. Exact per-customer TLS, CHAP, paths, exports, quotas and policies
-are configured by the consumer after creation; they are not baked into this image.
+`/usr/share/csi-storage/template.json` identifies the Alpine/OpenRC image, application
+pins and required host bindings. The outer architecture remains `amd64`; Alpine's
+package and asset architecture is `x86_64`. This is an explicit breaking change
+from the Debian/systemd v1 contract. Consumers must support Alpine networking,
+OpenRC services and the new asset name, or reject the image before instantiation.
+Do not apply a Debian/systemd installer to this rootfs.
 
-The empty machine-id is populated on boot. A service required before SSH generates
-fresh instance host keys. Password/interactive login is disabled. Global ZFS,
-NFS and LIO package activation is masked; The consumer must enable only its reviewed
-scoped recovery/services after checking host bindings. Do not unmask Debian's
-whole-tree LIO save/restore service. Merely booting the image must not activate
-storage exports or targets. Forwarding is disabled for both address families.
+The consumer creates the LXC and injects an operator public key and network
+configuration, then configures the instance over operator SSH. Cluster clients
+never receive that SSH access. Consumer installers apply and verify their own
+reviewed backend overlays; this image imports no consumer implementation files.
+Alpine's root `*` password marker permits public-key authentication without a
+usable password. Password and interactive authentication are disabled.
 
-The privileged LXC and its consumer configuration are trusted. This template does
-not create a security boundary against a compromised container-root process.
-Customer isolation is provided by the gatekeeper, network rules, NFS exports and
-iSCSI authentication configured outside the image.
+Packaged OpenRC sshd generates missing host keys before starting. No host keys
+or machine-id are shipped; OpenRC generates the machine-id at boot. Only basic
+networking, identity, SSH, logging and shutdown services are enabled. OpenRC runs
+in LXC mode; BusyBox init retains the boot/shutdown sequence and a container
+console. The host must provide `/proc`, `/dev` and `/run`; gcompat's loader uses
+`/proc/self/exe`.
 
-## Acceptance
+Global ZFS/NFS/LIO OpenRC scripts are blocked by `/dev/null` symlinks listed in
+`blocked_openrc_services`. No storage service or nftables policy is activated on
+boot. Consumers implement only reviewed scoped services after checking bindings;
+never restore targetcli's whole-tree save/restore script. APK maintenance can
+restore packaged scripts, so consumers must recheck the block/runlevel policy
+before restarting services after updates. IPv4 and IPv6 forwarding are disabled.
 
-Unused upstream SSH test fixtures are removed. The signed Debian GnuTLS library
-contains embedded public self-test key vectors; the scanner permits only that
-reviewed ELF path with its exact pinned SHA-256. It rejects other key material
-and does not exempt arbitrary binaries. Those public vectors authenticate no
-consumer.
+Consumers supply privileged LXC device/mount permissions, the owned dataset,
+`/dev/zfs`, owned ZVOL access, LIO target configfs and the common host-backed
+persistence lock. The host owns discovery authentication. Per-customer TLS, CHAP,
+exports, quotas and policies are configured after creation. Match ZFS userspace
+to the real Proxmox host module during acceptance; the guest contains no pool or
+second kernel. Container root and consumer configuration are trusted. Isolation
+comes from externally configured gatekeeper policy, network rules, NFS exports
+and iSCSI authentication.
 
-Archive verification checks identity/configuration leaks and activation masks.
-The build also imports the actual backend driver after npm removal and executes
-the gatekeeper's no-argument usage branch inside the rootfs (expected exit 64).
-This catches missing dynamic loaders, libraries and application dependencies
-without configuring or activating storage. Archive checks require matching build
-provenance and reject shipped Git/npm build tools.
-It does not prove Proxmox boot, SSH uniqueness, provider integration, CSI/PVC
-functionality, snapshots or recovery. Those require a separate bounded live
-acceptance batch on a real host. Record actual build/live results separately.
+## Validation and Alpine compatibility
 
-## Alpine migration assessment
+Both gcompat and native musl gatekeeper variants were exercised under Alpine;
+see [the assessment](docs/alpine-assessment.md). The shipped image uses the
+original upstream release and its complete license notices with locked gcompat.
+The native musl SDK is not shipped or downloaded by the production build.
 
-The Alpine/OpenRC build in [lxc-wireguard v0.1.0](https://github.com/fischerscode/lxc-wireguard/tree/v0.1.0)
-is a useful reference for verified inputs, build provenance and normalized archive
-metadata. This image retains Debian because its pinned gatekeeper v0.1.1 is a
-glibc executable. See [the migration assessment](docs/alpine-assessment.md) for
-the binary evidence and prerequisites. Lower disk usage from removing build
-tools does not establish lower guest RAM usage; measure that in live acceptance.
+Every build tests the actual gatekeeper executable with temporary mTLS identities
+and a fake CSI Unix-socket backend for both NFS and iSCSI profiles: allowed/rejected
+clients, leaf pinning, hostname/CA validation, gRPC forwarding, policy denials,
+error sanitization, repeated/concurrent calls, restart, SIGTERM/SIGINT and invalid
+configuration. After removing build tools it rechecks the backend driver import
+and gatekeeper loader. Archive checks reject instance data, private keys, build
+residue, active storage, package drift and missing boot/SSH policy. Unused
+upstream SSH test fixtures are removed; there are no binary private-key exemptions.
+
+These checks do not prove Proxmox boot, kernel/NFS/LIO integration, CSI/PVC storage
+operations, snapshots or recovery. Those require a separate bounded live batch.
+[Validation records](docs/validation.md) distinguish local runtime/archive checks
+from live guest acceptance. No RAM or performance saving is claimed without a
+comparable live workload measurement.
