@@ -14,7 +14,9 @@ bits after finalization, before the final runtime smoke check and packing. The
 verifier reads numeric ownership and modes from the final compressed archive,
 requires the driver and its ancestors with exact `0644`/`0755` modes, and rejects
 writable or non-root-owned application entries, including production dependencies
-and notices. Symlink modes are exempt because POSIX symlinks conventionally use
+and notices. Every build additionally extracts the verified final archive as root
+with `--same-owner --same-permissions` and reruns rootfs policy verification.
+Symlink modes are exempt because POSIX symlinks conventionally use
 `0777`; their ownership is checked without dereferencing them.
 
 Local checks passed: 20 Python tests (including compressed-header mutations for

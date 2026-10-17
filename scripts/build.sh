@@ -92,5 +92,12 @@ tar --numeric-owner --xattrs --acls --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
  --pax-option=delete=atime,delete=ctime -C "$rootfs" -cf - . | zstd -T1 -10 -o "$out/$name"
 cp "$rootfs/usr/share/csi-storage/template.json" "$out/template.json"
 python3 "$repo/scripts/verify.py" --archive "$out/$name"
+# Exercise the final artifact as a root restore, retaining the header modes
+# despite the builder's umask. A default unprivileged extraction can hide 0775/
+# 0664 source permissions and is not a substitute for the header checks above.
+mkdir "$work/archive-check"
+tar --zstd --extract --same-owner --same-permissions --numeric-owner \
+ --file "$out/$name" --directory "$work/archive-check"
+python3 "$repo/scripts/verify.py" --rootfs "$work/archive-check"
 (cd "$out" && sha256sum "$name" template.json packages.tsv build-info.json > SHA256SUMS)
 echo "Template verified: $name"
