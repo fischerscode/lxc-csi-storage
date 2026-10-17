@@ -47,6 +47,12 @@ pins and tool versions. Tar ordering and timestamps are normalized to the source
 commit timestamp and zstd uses one thread. Package-generated file contents and
 npm scripts can still vary; bit-identical output is not promised.
 
+Before packing, both `/opt` application trees (including production npm
+dependencies) and the gatekeeper notices are normalized to root ownership with
+group/other write bits removed. Executable bits and symlinks are preserved.
+Rootfs and final tar-header checks enforce ownership/modes independently of
+extraction umask, including the backend driver's complete ancestor chain.
+
 On a disposable x86_64 Linux root builder, install curl, CA certificates, GnuPG,
 zstd, Python 3, Git, unzip, util-linux and ShellCheck, then run:
 

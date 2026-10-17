@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from fixtures import prepare
+from fixtures import prepare, policy_entries
 import verify as module
 
 
@@ -11,11 +11,11 @@ def clean():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         prepare(root)
-        return list(module.root_entries(root))
+        return policy_entries(root)
 
 
 def replace(entries, path, data):
-    return [(n, k, l, data if n == path else old) for n, k, l, old in entries]
+    return [entry._replace(data=data) if entry.name == path else entry for entry in entries]
 
 
 class PolicyTests(unittest.TestCase):

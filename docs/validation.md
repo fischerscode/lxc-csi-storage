@@ -1,5 +1,35 @@
 # Local validation record
 
+## 2026-10-16: issue #1 application archive permissions
+
+The public v0.2.0 archive was downloaded and its SHA-256 independently matched
+`333903e912d1c15c6518594df01773273ef93dad46b4fd92408df7090db67190`.
+Tar headers confirmed the reported `0775` driver directories and `0664` driver
+file. An audit found 268 group/other-writable entries in democratic-csi; none
+in the gatekeeper binary/notices tree. All inspected application entries were
+already root-owned.
+
+The builder now normalizes application ownership and removes group/other write
+bits after finalization, before the final runtime smoke check and packing. The
+verifier reads numeric ownership and modes from the final compressed archive,
+requires the driver and its ancestors with exact `0644`/`0755` modes, and rejects
+writable or non-root-owned application entries, including production dependencies
+and notices. Symlink modes are exempt because POSIX symlinks conventionally use
+`0777`; their ownership is checked without dereferencing them.
+
+Local checks passed: 20 Python tests (including compressed-header mutations for
+both write bits and both owner IDs), Bash syntax, ShellCheck and `git diff --check`.
+Regression coverage preserves executables, symlink targets and driver contents,
+checks hardlink headers and missing ancestors, and explicitly preserves `0775`/
+`0664` during GNU tar extraction with `--same-permissions` under umask `022`.
+The local builder lacks noninteractive sudo; the complete authenticated root
+build and application smoke tests are delegated to the existing CI workflow.
+
+No Proxmox guest boot, CSI/PVC lifecycle, snapshot, reboot or host-storage
+acceptance is claimed. Consumers must repeat those checks with the corrected
+release. No application/package pins, storage-service blocks or consumer safety
+checks were changed.
+
 ## 2026-10-16: CI npm residue cleanup
 
 [The first Alpine CI run](https://github.com/fischerscode/lxc-csi-storage/actions/runs/38939996790)

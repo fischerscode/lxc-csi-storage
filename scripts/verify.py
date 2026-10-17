@@ -6,7 +6,9 @@ from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tarfile
+from typing import NamedTuple
 
+from application_permissions import DRIVER, DRIVER_DIRECTORIES, verify_permissions
 from finalize import BLOCKED_SERVICES, NETWORK, RUNLEVELS, SSH_POLICY
 from package_lock import installed
 
@@ -20,9 +22,20 @@ FORBIDDEN = ('root/.ssh', 'root/.npm', 'root/.cache', 'etc/csi-storage',
 PRIVATE_PEM = re.compile(rb'-----BEGIN (?:[A-Z ]*PRIVATE KEY)-----[\r\n]+[A-Za-z0-9+/=\r\n]{64,}-----END (?:[A-Z ]*PRIVATE KEY)-----')
 
 
+class Entry(NamedTuple):
+    name: str
+    kind: str
+    link: str
+    data: bytes
+    uid: int = 0
+    gid: int = 0
+    mode: int = 0o644
+
+
 def verify(entries):
     seen, files, links = set(), {}, {}
-    for name, kind, link, data in entries:
+    for entry in entries:
+        name, kind, link, data, uid, gid, mode = Entry(*entry)
         p = PurePosixPath(name)
         if p.is_absolute() or '..' in p.parts:
             raise ValueError('Unsafe archive path')
@@ -32,6 +45,7 @@ def verify(entries):
         if name in seen:
             raise ValueError('Duplicate archive path')
         seen.add(name)
+        verify_permissions(name, kind, uid, gid, mode)
         if any(name == f or name.startswith(f + '/') for f in FORBIDDEN):
             raise ValueError('Instance/build data present: ' + name)
         if (name.startswith('etc/ssh/ssh_host_') or name.endswith(('/authorized_keys', '/authorized_keys2',
@@ -120,7 +134,7 @@ def verify(entries):
     if b'Include /etc/ssh/sshd_config.d/*.conf' not in files.get('etc/ssh/sshd_config', b''):
         raise ValueError('SSH policy is not included')
     installed(files.get('lib/apk/db/installed', b'').decode())
-    required = ['sbin/init', 'sbin/openrc', 'opt/csi-gatekeeper/csi-gatekeeper',
+    required = [DRIVER, *DRIVER_DIRECTORIES, 'sbin/init', 'sbin/openrc', 'opt/csi-gatekeeper/csi-gatekeeper',
                 'usr/share/doc/csi-gatekeeper/LICENSE',
                 'usr/share/doc/csi-gatekeeper/THIRD_PARTY_NOTICES.txt',
                 'usr/share/doc/csi-gatekeeper/BUILD_INFO.json',
@@ -134,20 +148,23 @@ def verify(entries):
 def root_entries(root):
     for p in sorted(root.rglob('*')):
         name = p.relative_to(root).as_posix()
+        metadata = p.lstat()
+        owner_mode = (metadata.st_uid, metadata.st_gid, metadata.st_mode & 0o7777)
         if p.is_symlink():
-            yield name, 'symlink', p.readlink().as_posix(), b''
+            yield Entry(name, 'symlink', p.readlink().as_posix(), b'', *owner_mode)
         elif p.is_dir():
-            yield name, 'dir', '', b''
+            yield Entry(name, 'dir', '', b'', *owner_mode)
         elif p.is_file():
-            yield name, 'file', '', p.read_bytes()
+            yield Entry(name, 'file', '', p.read_bytes(), *owner_mode)
         else:
-            yield name, 'unsupported', '', b''
+            yield Entry(name, 'unsupported', '', b'', *owner_mode)
 
 
 def tar_entries(tar):
     for m in tar:
         kind = 'file' if m.isfile() else 'dir' if m.isdir() else 'symlink' if m.issym() else 'hardlink' if m.islnk() else 'unsupported'
-        yield m.name, kind, m.linkname, tar.extractfile(m).read() if m.isfile() else b''
+        yield Entry(m.name, kind, m.linkname, tar.extractfile(m).read() if m.isfile() else b'',
+                    m.uid, m.gid, m.mode)
 
 
 def main():

@@ -7,6 +7,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from finalize import finalize
 from package_lock import locked
+from verify import root_entries
+
+
+def policy_entries(root):
+    # Fixtures run without root. Supply synthetic release ownership while
+    # preserving the real filesystem modes for policy/finalization tests.
+    return [entry._replace(uid=0, gid=0) for entry in root_entries(root)]
 
 
 def prepare(root):
@@ -24,6 +31,7 @@ def prepare(root):
         'usr/share/doc/csi-gatekeeper/THIRD_PARTY_NOTICES.txt': 'PUBLIC TEST NOTICE',
         'usr/share/doc/csi-gatekeeper/BUILD_INFO.json': '{}',
         'opt/democratic-csi/package-lock.json': '{}',
+        'opt/democratic-csi/src/driver/controller-zfs-generic/index.js': '// synthetic driver\n',
         'opt/democratic-csi/node_modules/@grpc/grpc-js/package.json': '{}',
         'sbin/init': 'PUBLIC TEST PLACEHOLDER', 'sbin/openrc': 'PUBLIC TEST PLACEHOLDER',
         'lib/apk/db/installed': '\n\n'.join('P:' + name + '\nV:' + value[0] + '\nA:x86_64'
@@ -33,6 +41,7 @@ def prepare(root):
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
+        path.chmod(0o755 if name == 'opt/csi-gatekeeper/csi-gatekeeper' else 0o644)
     (root / 'etc/init.d').mkdir(exist_ok=True)
     finalize(root, 'v0.0.0-test', config)
     (root / 'usr/share/csi-storage/build-info.json').write_text(json.dumps({

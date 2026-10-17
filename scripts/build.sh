@@ -81,6 +81,7 @@ chroot "$rootfs" apk --cache-dir /packages --no-network del "${build_roots[@]}"
 rm -rf "$rootfs/packages"
 printf '%s  %s\n' "${config[8]}" "$rootfs/opt/democratic-csi/src/driver/controller-zfs-generic/index.js" | sha256sum --check --status
 python3 "$repo/scripts/finalize.py" "$rootfs" "$version" "$repo/build-config.json"
+python3 "$repo/scripts/application_permissions.py" "$rootfs"
 # Check that cleanup did not remove required dependencies; no test identities are created.
 unshare --mount --propagation private "$repo/scripts/check-final-runtime.sh" "$rootfs"
 install -m 0644 "$out/build-info.json" "$rootfs/usr/share/csi-storage/build-info.json"
